@@ -616,9 +616,9 @@ function HoldingCard({ item, onDelete }: { item: Holding; onDelete: () => void }
       <div className="stockTop">
         <div className="symbolBadge">{item.market}</div>
         <div>
-          <h3>{item.symbol}</h3>
+          <h3>{item.name}</h3>
           <p>
-            {item.name} · {quoteStateLabel(item.quoteState)}
+            {item.symbol} · {quoteStateLabel(item.quoteState)}
           </p>
         </div>
         <button className="deleteButton" onClick={onDelete} title="종목 삭제">
