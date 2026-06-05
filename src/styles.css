@@ -403,6 +403,40 @@ h1 {
   padding: 14px;
 }
 
+.searchResults {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+}
+
+.searchResults button {
+  min-height: 58px;
+  border: 1px solid #dbe5e1;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #101820;
+  text-align: left;
+}
+
+.searchResults button.selected {
+  border-color: #157054;
+  background: #eef8f4;
+}
+
+.searchResults strong {
+  font-size: 0.95rem;
+}
+
+.searchResults span {
+  color: #687775;
+  line-height: 1.35;
+}
+
 .quotePreview span,
 .tradeTicket span {
   display: block;
@@ -600,7 +634,8 @@ code {
 
   .quoteSearch,
   .quotePreview,
-  .tradeTicket {
+  .tradeTicket,
+  .searchResults button {
     grid-template-columns: 1fr;
   }
 }
