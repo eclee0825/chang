@@ -64,46 +64,44 @@ async function fetchUsQuote({ symbol, name, response }) {
 }
 
 async function fetchKoreanQuote({ symbol, name, response }) {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey) {
-    return response.status(500).json({
-      error: "TWELVE_DATA_API_KEY is not configured in Vercel Environment Variables."
-    });
-  }
-
-  const krxSymbol = symbol.includes(":") ? symbol : `${symbol}:KRX`;
-  const url = new URL("https://api.twelvedata.com/quote");
-  url.searchParams.set("symbol", krxSymbol);
-  url.searchParams.set("interval", "1min");
-  url.searchParams.set("apikey", apiKey);
+  const yahooSymbol = symbol.includes(".") ? symbol : `${symbol}.KS`;
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}`);
+  url.searchParams.set("interval", "1m");
+  url.searchParams.set("range", "1d");
 
   try {
     const upstream = await fetch(url);
     const data = await upstream.json();
+    const result = data.chart?.result?.[0];
+    const meta = result?.meta;
 
-    if (!upstream.ok || data.status === "error" || !data.close) {
+    if (!upstream.ok || data.chart?.error || !meta || typeof meta.regularMarketPrice !== "number") {
       return response.status(502).json({
-        error: data.message || `${symbol} is not available from the KRX quote API.`,
+        error: `${symbol} is not available from Yahoo Finance delayed quote data.`,
         symbol
       });
     }
 
+    const price = Number(meta.regularMarketPrice);
+    const previousClose = Number(meta.chartPreviousClose || meta.previousClose || 0);
+    const changePercent = previousClose > 0 ? ((price - previousClose) / previousClose) * 100 : 0;
+
     return response.status(200).json({
       symbol,
-      name: data.name || name || symbol,
-      price: Number(data.close),
-      open: Number(data.open || 0),
-      high: Number(data.high || 0),
-      low: Number(data.low || 0),
-      previousClose: Number(data.previous_close || 0),
-      changePercent: Number(data.percent_change || 0),
-      lastUpdated: data.datetime ? new Date(data.datetime).toISOString() : new Date().toISOString(),
-      provider: "Twelve Data",
+      name: name || meta.longName || meta.shortName || symbol,
+      price,
+      open: Number(meta.regularMarketOpen || 0),
+      high: Number(meta.regularMarketDayHigh || 0),
+      low: Number(meta.regularMarketDayLow || 0),
+      previousClose,
+      changePercent,
+      lastUpdated: meta.regularMarketTime ? new Date(Number(meta.regularMarketTime) * 1000).toISOString() : new Date().toISOString(),
+      provider: "Yahoo Finance delayed",
       market: "KR"
     });
   } catch (error) {
     return response.status(502).json({
-      error: error instanceof Error ? error.message : "KRX quote request failed",
+      error: error instanceof Error ? error.message : "Yahoo Finance quote request failed",
       symbol
     });
   }

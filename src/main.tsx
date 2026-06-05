@@ -397,7 +397,7 @@ function App() {
         <div>
           <p className="eyebrow">Live US/KR Stock PWA</p>
           <h1>MyStock Lab</h1>
-          <p className="subtitle">미국 주식은 Finnhub, 국내 주식은 Twelve Data KRX API로 조회해 실시간 확인 종목만 추가합니다.</p>
+          <p className="subtitle">미국 주식은 Finnhub 실시간 시세, 국내 주식은 Yahoo Finance 무료 지연 시세로 조회합니다.</p>
         </div>
         <button className="installButton" onClick={installApp} disabled={!installPrompt} title="홈 화면에 설치">
           <Download size={18} />
@@ -568,7 +568,7 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>API와 설치</h2>
-              <p>미국/국내 주식 모두 데모 가격 없이 서버리스 API가 반환한 시세만 사용합니다.</p>
+              <p>미국 주식은 실시간 시세, 국내 주식은 계좌 없이 사용할 수 있는 무료 지연 시세를 사용합니다.</p>
             </div>
           </div>
           <div className="settingsList">
@@ -576,7 +576,7 @@ function App() {
               <CheckCircle2 size={18} />
               <div>
                 <strong>필요한 Vercel 환경변수</strong>
-                <p><code>FINNHUB_API_KEY</code>는 미국 주식, <code>TWELVE_DATA_API_KEY</code>는 국내 KRX 조회에 사용합니다.</p>
+                <p><code>FINNHUB_API_KEY</code>는 미국 주식 조회에 사용합니다. 국내 주식은 Yahoo Finance 지연 시세라 별도 키가 필요 없습니다.</p>
               </div>
             </article>
             <label className="toggleRow">
@@ -587,7 +587,7 @@ function App() {
               <BarChart3 size={18} />
               <div>
                 <strong>추가 가능한 종목</strong>
-                <p>검색 후 quote 조회가 성공한 종목만 포트폴리오에 들어갑니다. 조회 실패 종목은 추가되지 않습니다.</p>
+                <p>검색 후 quote 조회가 성공한 종목만 포트폴리오에 들어갑니다. 국내 주식은 실시간이 아닌 무료 지연 시세로 표시됩니다.</p>
               </div>
             </article>
             <article className="note">

@@ -85,7 +85,7 @@ async function searchKoreanStocks(request, response) {
     .filter((item) => item.symbol.includes(query) || item.name.toLowerCase().includes(normalized))
     .map((item) => ({
       ...item,
-      provider: "Twelve Data",
+      provider: "Yahoo Finance delayed",
       market: "KR"
     }));
 
