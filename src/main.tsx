@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import {
   Activity,
   BarChart3,
-  ChevronDown,
   Download,
   Globe2,
   LineChart,
@@ -29,12 +28,16 @@ type Holding = {
   avgPrice: number;
   price: number;
   changePercent: number;
+  source?: "api" | "demo";
+  lastUpdated?: string;
 };
 
 type ApiStatus = "idle" | "loading" | "success" | "fallback" | "error";
 
 const STORAGE_KEY = "mystock-lab-holdings";
 const API_KEY_STORAGE = "mystock-lab-twelvedata-key";
+const AUTO_REFRESH_STORAGE = "mystock-lab-auto-refresh";
+const QUOTE_REFRESH_MS = 60_000;
 
 const seedHoldings: Holding[] = [
   {
@@ -45,7 +48,8 @@ const seedHoldings: Holding[] = [
     quantity: 3,
     avgPrice: 183,
     price: 196.58,
-    changePercent: 0.74
+    changePercent: 0.74,
+    source: "demo"
   },
   {
     id: "seed-nvda",
@@ -55,7 +59,8 @@ const seedHoldings: Holding[] = [
     quantity: 2,
     avgPrice: 112,
     price: 141.22,
-    changePercent: 1.42
+    changePercent: 1.42,
+    source: "demo"
   },
   {
     id: "seed-005930",
@@ -65,7 +70,8 @@ const seedHoldings: Holding[] = [
     quantity: 5,
     avgPrice: 72000,
     price: 78100,
-    changePercent: -0.28
+    changePercent: -0.28,
+    source: "demo"
   }
 ];
 
@@ -79,6 +85,11 @@ const demoPrices: Record<string, { name: string; price: number; changePercent: n
   "000660": { name: "SK하이닉스", price: 201500, changePercent: 1.12 },
   "035420": { name: "NAVER", price: 188400, changePercent: -0.64 },
   "005380": { name: "현대차", price: 246000, changePercent: 0.56 }
+};
+
+const popularSymbols: Record<Market, string[]> = {
+  US: ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"],
+  KR: ["005930", "000660", "035420", "005380"]
 };
 
 function uid() {
@@ -109,9 +120,10 @@ function loadHoldings() {
   }
 }
 
-async function fetchQuote(symbol: string, apiKey: string) {
+async function fetchQuote(symbol: string, market: Market, apiKey: string) {
   const url = new URL("https://api.twelvedata.com/quote");
-  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("symbol", market === "KR" ? `${symbol}:KRX` : symbol);
+  url.searchParams.set("interval", "1min");
   url.searchParams.set("apikey", apiKey);
 
   const response = await fetch(url);
@@ -123,7 +135,9 @@ async function fetchQuote(symbol: string, apiKey: string) {
   return {
     name: data.name || symbol,
     price: Number(data.close),
-    changePercent: Number(data.percent_change || 0)
+    changePercent: Number(data.percent_change || 0),
+    source: "api" as const,
+    lastUpdated: data.datetime || new Date().toISOString()
   };
 }
 
@@ -138,7 +152,9 @@ function fallbackQuote(symbol: string) {
   return {
     ...base,
     price: Math.max(1, Math.round(base.price * drift * 100) / 100),
-    changePercent: Math.round((base.changePercent + (Math.random() - 0.5) * 1.3) * 100) / 100
+    changePercent: Math.round((base.changePercent + (Math.random() - 0.5) * 1.3) * 100) / 100,
+    source: "demo" as const,
+    lastUpdated: new Date().toISOString()
   };
 }
 
@@ -152,6 +168,9 @@ function App() {
   const [quantity, setQuantity] = useState(1);
   const [avgPrice, setAvgPrice] = useState(100);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [autoRefresh, setAutoRefresh] = useState(localStorage.getItem(AUTO_REFRESH_STORAGE) !== "false");
+  const [quotePreview, setQuotePreview] = useState<ReturnType<typeof fallbackQuote> | null>(null);
+  const [quoteError, setQuoteError] = useState("");
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(holdings));
@@ -160,6 +179,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(API_KEY_STORAGE, apiKey);
   }, [apiKey]);
+
+  useEffect(() => {
+    localStorage.setItem(AUTO_REFRESH_STORAGE, String(autoRefresh));
+  }, [autoRefresh]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -174,6 +197,21 @@ function App() {
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
     return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
   }, []);
+
+  useEffect(() => {
+    if (!apiKey || !autoRefresh) return;
+
+    const timer = window.setInterval(() => {
+      refreshPrices();
+    }, QUOTE_REFRESH_MS);
+
+    return () => window.clearInterval(timer);
+  }, [apiKey, autoRefresh, holdings]);
+
+  useEffect(() => {
+    setQuotePreview(null);
+    setQuoteError("");
+  }, [market, symbol]);
 
   const totals = useMemo(() => {
     return holdings.reduce(
@@ -196,22 +234,46 @@ function App() {
   async function refreshPrices() {
     setStatus("loading");
 
+    let usedApi = false;
+    let usedFallback = false;
     const updated = await Promise.all(
       holdings.map(async (item) => {
         try {
-          if (apiKey && item.market === "US") {
-            const quote = await fetchQuote(item.symbol, apiKey);
+          if (apiKey) {
+            const quote = await fetchQuote(item.symbol, item.market, apiKey);
+            usedApi = true;
             return { ...item, ...quote };
           }
+          usedFallback = true;
           return { ...item, ...fallbackQuote(item.symbol) };
         } catch {
+          usedFallback = true;
           return { ...item, ...fallbackQuote(item.symbol) };
         }
       })
     );
 
     setHoldings(updated);
-    setStatus(apiKey ? "success" : "fallback");
+    setStatus(usedApi && !usedFallback ? "success" : "fallback");
+  }
+
+  async function previewQuote() {
+    setStatus("loading");
+    setQuoteError("");
+    const normalized = symbol.trim().toUpperCase();
+
+    try {
+      const quote = apiKey ? await fetchQuote(normalized, market, apiKey) : fallbackQuote(normalized);
+      setQuotePreview(quote);
+      setAvgPrice(quote.price);
+      setStatus(apiKey ? "success" : "fallback");
+    } catch {
+      const quote = fallbackQuote(normalized);
+      setQuotePreview(quote);
+      setAvgPrice(quote.price);
+      setQuoteError("API 조회에 실패해 데모 가격을 표시했습니다.");
+      setStatus("fallback");
+    }
   }
 
   async function addHolding(event: React.FormEvent) {
@@ -219,13 +281,13 @@ function App() {
     setStatus("loading");
     const normalized = symbol.trim().toUpperCase();
 
-    let quote = fallbackQuote(normalized);
+    let quote = quotePreview || fallbackQuote(normalized);
     try {
-      if (apiKey && market === "US") {
-        quote = await fetchQuote(normalized, apiKey);
+      if (apiKey && !quotePreview) {
+        quote = await fetchQuote(normalized, market, apiKey);
         setStatus("success");
       } else {
-        setStatus("fallback");
+        setStatus(quote.source === "api" ? "success" : "fallback");
       }
     } catch {
       setStatus("fallback");
@@ -240,11 +302,14 @@ function App() {
         quantity: Math.max(0, Number(quantity)),
         avgPrice: Math.max(0, Number(avgPrice)),
         price: quote.price,
-        changePercent: quote.changePercent
+        changePercent: quote.changePercent,
+        source: quote.source,
+        lastUpdated: quote.lastUpdated
       },
       ...items
     ]);
     setSymbol(market === "US" ? "MSFT" : "000660");
+    setQuotePreview(null);
     setActiveTab("portfolio");
   }
 
@@ -316,10 +381,10 @@ function App() {
       {activeTab === "portfolio" && (
         <section className="panel">
           <div className="panelHeader">
-            <div>
-              <h2>관심 종목</h2>
-              <p>{statusMessage(status)}</p>
-            </div>
+          <div>
+            <h2>관심 종목</h2>
+            <p>{statusMessage(status)}</p>
+          </div>
             <button className="iconButton" onClick={refreshPrices} title="가격 새로고침">
               <RefreshCcw size={18} />
             </button>
@@ -337,7 +402,9 @@ function App() {
                     <div className="symbolBadge">{item.market}</div>
                     <div>
                       <h3>{item.symbol}</h3>
-                      <p>{item.name}</p>
+                      <p>
+                        {item.name} · {item.source === "api" ? "실제 시세" : "데모 시세"}
+                      </p>
                     </div>
                     <button
                       className="deleteButton"
@@ -370,6 +437,10 @@ function App() {
                       <span>손익률</span>
                       <strong className={itemProfit >= 0 ? "gain" : "loss"}>{itemProfitPercent.toFixed(2)}%</strong>
                     </div>
+                    <div>
+                      <span>업데이트</span>
+                      <strong>{formatUpdateTime(item.lastUpdated)}</strong>
+                    </div>
                   </div>
                 </article>
               );
@@ -383,24 +454,52 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>종목 추가</h2>
-              <p>미국 종목은 API 키가 있으면 Twelve Data로 조회하고, 국내 종목은 데모 가격으로 진행합니다.</p>
+              <p>종목을 먼저 조회한 뒤 실제 증권앱처럼 보유 수량과 평균 매수가를 입력합니다.</p>
             </div>
           </div>
           <form className="formGrid" onSubmit={addHolding}>
-            <label>
-              시장
-              <span className="selectWrap">
-                <select value={market} onChange={(event) => setMarket(event.target.value as Market)}>
-                  <option value="US">미국 주식</option>
-                  <option value="KR">국내 주식</option>
-                </select>
-                <ChevronDown size={17} />
-              </span>
-            </label>
-            <label>
-              티커/종목코드
-              <input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="AAPL 또는 005930" />
-            </label>
+            <div className="marketSwitch" role="group" aria-label="시장 선택">
+              <button type="button" className={market === "US" ? "selected" : ""} onClick={() => setMarket("US")}>
+                미국 주식
+              </button>
+              <button type="button" className={market === "KR" ? "selected" : ""} onClick={() => setMarket("KR")}>
+                국내 주식
+              </button>
+            </div>
+            <div className="quoteSearch">
+              <label>
+                종목 검색
+                <input value={symbol} onChange={(event) => setSymbol(event.target.value)} placeholder="AAPL 또는 005930" />
+              </label>
+              <button className="lookupButton" type="button" onClick={previewQuote}>
+                <RefreshCcw size={17} />
+                현재가 조회
+              </button>
+            </div>
+            <div className="quickSymbols">
+              {popularSymbols[market].map((item) => (
+                <button key={item} type="button" onClick={() => setSymbol(item)}>
+                  {item}
+                </button>
+              ))}
+            </div>
+            {quotePreview && (
+              <article className="quotePreview">
+                <div>
+                  <span>{quotePreview.source === "api" ? "실제 시세" : "데모 시세"}</span>
+                  <strong>{quotePreview.name}</strong>
+                </div>
+                <div>
+                  <span>현재가</span>
+                  <strong>{currency(quotePreview.price, market)}</strong>
+                </div>
+                <div>
+                  <span>변동률</span>
+                  <strong className={quotePreview.changePercent >= 0 ? "gain" : "loss"}>{quotePreview.changePercent.toFixed(2)}%</strong>
+                </div>
+              </article>
+            )}
+            {quoteError && <p className="formNotice">{quoteError}</p>}
             <label>
               보유 수량
               <input type="number" min="0" step="0.01" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
@@ -409,6 +508,12 @@ function App() {
               평균 매수가
               <input type="number" min="0" step="0.01" value={avgPrice} onChange={(event) => setAvgPrice(Number(event.target.value))} />
             </label>
+            <article className="tradeTicket">
+              <span>예상 매수 원금</span>
+              <strong>{currency(Number(quantity) * Number(avgPrice || 0), market)}</strong>
+              <span>현재가 기준 평가금액</span>
+              <strong>{currency(Number(quantity) * (quotePreview?.price || avgPrice || 0), market)}</strong>
+            </article>
             <button className="primaryButton" type="submit">
               <Plus size={18} />
               내 포트폴리오에 추가
@@ -438,15 +543,19 @@ function App() {
             <article className="note">
               <Globe2 size={18} />
               <div>
-                <strong>미국 주식</strong>
-                <p>Twelve Data Basic 플랜으로 수업용 조회를 시작하기 쉽습니다. 호출 제한이 있어 새로고침은 필요한 순간에만 합니다.</p>
+                <strong>실제 시세 업데이트</strong>
+                <p>Twelve Data API Key가 있으면 미국 주식과 KRX 심볼을 실제 조회하고, 실패한 종목은 데모 가격으로 유지합니다.</p>
               </div>
             </article>
+            <label className="toggleRow">
+              <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+              <span>1분마다 자동으로 가격 새로고침</span>
+            </label>
             <article className="note">
               <BarChart3 size={18} />
               <div>
                 <strong>국내 주식</strong>
-                <p>공식 KIS Open API는 OAuth와 앱 시크릿 관리가 필요하므로 프론트엔드 단독 PWA 수업에서는 데모 데이터가 안전합니다.</p>
+                <p>Twelve Data에서는 삼성전자처럼 <code>005930:KRX</code> 형식으로 조회를 시도합니다. 플랜/지원 범위에 따라 데모 가격으로 전환될 수 있습니다.</p>
               </div>
             </article>
             <article className="note">
@@ -466,9 +575,20 @@ function App() {
 function statusMessage(status: ApiStatus) {
   if (status === "loading") return "가격을 불러오는 중입니다.";
   if (status === "success") return "API 가격을 반영했습니다.";
-  if (status === "fallback") return "데모 가격으로 업데이트했습니다.";
+  if (status === "fallback") return "일부 종목은 데모 가격으로 업데이트했습니다.";
   if (status === "error") return "조회에 실패했습니다.";
   return "새로고침 버튼으로 가격을 업데이트하세요.";
+}
+
+function formatUpdateTime(value?: string) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 16);
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
