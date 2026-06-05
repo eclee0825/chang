@@ -4,7 +4,6 @@ import {
   Activity,
   BarChart3,
   Download,
-  Globe2,
   LineChart,
   Plus,
   RefreshCcw,
@@ -35,7 +34,6 @@ type Holding = {
 type ApiStatus = "idle" | "loading" | "success" | "fallback" | "error";
 
 const STORAGE_KEY = "mystock-lab-holdings";
-const API_KEY_STORAGE = "mystock-lab-twelvedata-key";
 const AUTO_REFRESH_STORAGE = "mystock-lab-auto-refresh";
 const QUOTE_REFRESH_MS = 60_000;
 
@@ -120,11 +118,10 @@ function loadHoldings() {
   }
 }
 
-async function fetchQuote(symbol: string, market: Market, apiKey: string) {
-  const url = new URL("https://api.twelvedata.com/quote");
-  url.searchParams.set("symbol", market === "KR" ? `${symbol}:KRX` : symbol);
-  url.searchParams.set("interval", "1min");
-  url.searchParams.set("apikey", apiKey);
+async function fetchQuote(symbol: string, market: Market) {
+  const url = new URL("/api/quote", window.location.origin);
+  url.searchParams.set("symbol", symbol);
+  url.searchParams.set("market", market);
 
   const response = await fetch(url);
   if (!response.ok) throw new Error("quote request failed");
@@ -160,7 +157,6 @@ function fallbackQuote(symbol: string) {
 
 function App() {
   const [holdings, setHoldings] = useState<Holding[]>(loadHoldings);
-  const [apiKey, setApiKey] = useState(localStorage.getItem(API_KEY_STORAGE) || "");
   const [status, setStatus] = useState<ApiStatus>("idle");
   const [activeTab, setActiveTab] = useState<"portfolio" | "add" | "settings">("portfolio");
   const [market, setMarket] = useState<Market>("US");
@@ -175,10 +171,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(holdings));
   }, [holdings]);
-
-  useEffect(() => {
-    localStorage.setItem(API_KEY_STORAGE, apiKey);
-  }, [apiKey]);
 
   useEffect(() => {
     localStorage.setItem(AUTO_REFRESH_STORAGE, String(autoRefresh));
@@ -199,14 +191,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!apiKey || !autoRefresh) return;
+    if (!autoRefresh) return;
 
     const timer = window.setInterval(() => {
       refreshPrices();
     }, QUOTE_REFRESH_MS);
 
     return () => window.clearInterval(timer);
-  }, [apiKey, autoRefresh, holdings]);
+  }, [autoRefresh, holdings]);
 
   useEffect(() => {
     setQuotePreview(null);
@@ -239,13 +231,9 @@ function App() {
     const updated = await Promise.all(
       holdings.map(async (item) => {
         try {
-          if (apiKey) {
-            const quote = await fetchQuote(item.symbol, item.market, apiKey);
-            usedApi = true;
-            return { ...item, ...quote };
-          }
-          usedFallback = true;
-          return { ...item, ...fallbackQuote(item.symbol) };
+          const quote = await fetchQuote(item.symbol, item.market);
+          usedApi = true;
+          return { ...item, ...quote };
         } catch {
           usedFallback = true;
           return { ...item, ...fallbackQuote(item.symbol) };
@@ -263,10 +251,10 @@ function App() {
     const normalized = symbol.trim().toUpperCase();
 
     try {
-      const quote = apiKey ? await fetchQuote(normalized, market, apiKey) : fallbackQuote(normalized);
+      const quote = await fetchQuote(normalized, market);
       setQuotePreview(quote);
       setAvgPrice(quote.price);
-      setStatus(apiKey ? "success" : "fallback");
+      setStatus("success");
     } catch {
       const quote = fallbackQuote(normalized);
       setQuotePreview(quote);
@@ -283,8 +271,8 @@ function App() {
 
     let quote = quotePreview || fallbackQuote(normalized);
     try {
-      if (apiKey && !quotePreview) {
-        quote = await fetchQuote(normalized, market, apiKey);
+      if (!quotePreview) {
+        quote = await fetchQuote(normalized, market);
         setStatus("success");
       } else {
         setStatus(quote.source === "api" ? "success" : "fallback");
@@ -527,24 +515,15 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>API와 설치</h2>
-              <p>수업에서는 데모 모드로 완성한 뒤, API 키를 넣어 미국 주식 조회를 확장합니다.</p>
+              <p>API 키는 앱 화면에 입력하지 않고 Vercel 환경변수에 숨겨서 호출합니다.</p>
             </div>
           </div>
           <div className="settingsList">
-            <label>
-              Twelve Data API Key
-              <input
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="브라우저 실습용 키를 입력하세요"
-                autoComplete="off"
-              />
-            </label>
             <article className="note">
-              <Globe2 size={18} />
+              <RefreshCcw size={18} />
               <div>
-                <strong>실제 시세 업데이트</strong>
-                <p>Twelve Data API Key가 있으면 미국 주식과 KRX 심볼을 실제 조회하고, 실패한 종목은 데모 가격으로 유지합니다.</p>
+                <strong>자동 API 호출</strong>
+                <p>앱은 <code>/api/quote</code>를 호출하고, Vercel 환경변수 <code>TWELVE_DATA_API_KEY</code>로 실제 시세를 조회합니다.</p>
               </div>
             </article>
             <label className="toggleRow">
@@ -575,7 +554,7 @@ function App() {
 function statusMessage(status: ApiStatus) {
   if (status === "loading") return "가격을 불러오는 중입니다.";
   if (status === "success") return "API 가격을 반영했습니다.";
-  if (status === "fallback") return "일부 종목은 데모 가격으로 업데이트했습니다.";
+  if (status === "fallback") return "API 조회가 어려운 종목은 데모 가격으로 업데이트했습니다.";
   if (status === "error") return "조회에 실패했습니다.";
   return "새로고침 버튼으로 가격을 업데이트하세요.";
 }
