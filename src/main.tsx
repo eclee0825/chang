@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
+  AlertCircle,
   BarChart3,
+  CheckCircle2,
   Download,
   LineChart,
   Plus,
@@ -17,6 +19,8 @@ import {
 import "./styles.css";
 
 type Market = "US" | "KR";
+type QuoteState = "pending" | "live" | "error";
+type ApiStatus = "idle" | "loading" | "success" | "error";
 
 type Holding = {
   id: string;
@@ -27,68 +31,52 @@ type Holding = {
   avgPrice: number;
   price: number;
   changePercent: number;
-  source?: "api" | "demo";
   lastUpdated?: string;
+  quoteState: QuoteState;
+  errorMessage?: string;
 };
 
-type ApiStatus = "idle" | "loading" | "success" | "fallback" | "error";
+type Quote = {
+  name: string;
+  price: number;
+  changePercent: number;
+  lastUpdated: string;
+};
 
-const STORAGE_KEY = "mystock-lab-holdings";
+const STORAGE_KEY = "mystock-lab-live-holdings-v2";
 const AUTO_REFRESH_STORAGE = "mystock-lab-auto-refresh";
 const QUOTE_REFRESH_MS = 60_000;
+const USD_KRW_RATE = 1350;
 
 const seedHoldings: Holding[] = [
-  {
-    id: "seed-aapl",
-    market: "US",
-    symbol: "AAPL",
-    name: "Apple",
-    quantity: 3,
-    avgPrice: 183,
-    price: 196.58,
-    changePercent: 0.74,
-    source: "demo"
-  },
-  {
-    id: "seed-nvda",
-    market: "US",
-    symbol: "NVDA",
-    name: "NVIDIA",
-    quantity: 2,
-    avgPrice: 112,
-    price: 141.22,
-    changePercent: 1.42,
-    source: "demo"
-  },
-  {
-    id: "seed-005930",
-    market: "KR",
-    symbol: "005930",
-    name: "삼성전자",
-    quantity: 5,
-    avgPrice: 72000,
-    price: 78100,
-    changePercent: -0.28,
-    source: "demo"
-  }
+  createSeedHolding("US", "AAPL", "Apple", 3, 183),
+  createSeedHolding("US", "NVDA", "NVIDIA", 2, 112),
+  createSeedHolding("US", "MSFT", "Microsoft", 1, 420)
 ];
 
-const demoPrices: Record<string, { name: string; price: number; changePercent: number }> = {
-  AAPL: { name: "Apple", price: 196.58, changePercent: 0.74 },
-  MSFT: { name: "Microsoft", price: 478.87, changePercent: 0.42 },
-  NVDA: { name: "NVIDIA", price: 141.22, changePercent: 1.42 },
-  TSLA: { name: "Tesla", price: 183.71, changePercent: -1.08 },
-  GOOGL: { name: "Alphabet", price: 176.2, changePercent: 0.35 },
-  "005930": { name: "삼성전자", price: 78100, changePercent: -0.28 },
-  "000660": { name: "SK하이닉스", price: 201500, changePercent: 1.12 },
-  "035420": { name: "NAVER", price: 188400, changePercent: -0.64 },
-  "005380": { name: "현대차", price: 246000, changePercent: 0.56 }
+const popularSymbols: Record<Market, string[]> = {
+  US: ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "AMZN", "META"],
+  KR: ["005930", "000660", "035420", "005380", "068270"]
 };
 
-const popularSymbols: Record<Market, string[]> = {
-  US: ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"],
-  KR: ["005930", "000660", "035420", "005380"]
+const marketLabels: Record<Market, string> = {
+  US: "미국 주식",
+  KR: "국내 주식"
 };
+
+function createSeedHolding(market: Market, symbol: string, name: string, quantity: number, avgPrice: number): Holding {
+  return {
+    id: `seed-${symbol}`,
+    market,
+    symbol,
+    name,
+    quantity,
+    avgPrice,
+    price: 0,
+    changePercent: 0,
+    quoteState: "pending"
+  };
+}
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
@@ -102,56 +90,51 @@ function currency(value: number, market?: Market) {
   }).format(value);
 }
 
-function number(value: number) {
-  return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 2 }).format(value);
-}
-
 function loadHoldings() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return seedHoldings;
 
   try {
-    const parsed = JSON.parse(stored) as Holding[];
-    return Array.isArray(parsed) && parsed.length ? parsed : seedHoldings;
+    const parsed = JSON.parse(stored) as Partial<Holding>[];
+    if (!Array.isArray(parsed) || !parsed.length) return seedHoldings;
+
+    return parsed
+      .filter((item) => item.symbol && item.market)
+      .map((item) => ({
+        id: item.id || uid(),
+        market: item.market as Market,
+        symbol: String(item.symbol).toUpperCase(),
+        name: item.name || String(item.symbol).toUpperCase(),
+        quantity: Number(item.quantity || 0),
+        avgPrice: Number(item.avgPrice || 0),
+        price: item.quoteState === "live" ? Number(item.price || 0) : 0,
+        changePercent: item.quoteState === "live" ? Number(item.changePercent || 0) : 0,
+        lastUpdated: item.quoteState === "live" ? item.lastUpdated : undefined,
+        quoteState: item.quoteState === "live" ? "live" : "pending",
+        errorMessage: undefined
+      }));
   } catch {
     return seedHoldings;
   }
 }
 
-async function fetchQuote(symbol: string, market: Market) {
+async function fetchQuote(symbol: string, market: Market): Promise<Quote> {
   const url = new URL("/api/quote", window.location.origin);
   url.searchParams.set("symbol", symbol);
   url.searchParams.set("market", market);
 
   const response = await fetch(url);
-  if (!response.ok) throw new Error("quote request failed");
+  const data = await response.json().catch(() => ({}));
 
-  const data = await response.json();
-  if (data.status === "error" || !data.close) throw new Error(data.message || "quote unavailable");
+  if (!response.ok || typeof data.price !== "number") {
+    throw new Error(data.error || "실시간 시세를 조회할 수 없습니다.");
+  }
 
   return {
     name: data.name || symbol,
-    price: Number(data.close),
-    changePercent: Number(data.percent_change || 0),
-    source: "api" as const,
-    lastUpdated: data.datetime || new Date().toISOString()
-  };
-}
-
-function fallbackQuote(symbol: string) {
-  const normalized = symbol.toUpperCase().trim();
-  const base = demoPrices[normalized] || {
-    name: normalized,
-    price: normalized.match(/^\d+$/) ? 50000 : 100,
-    changePercent: 0
-  };
-  const drift = 1 + (Math.random() - 0.5) * 0.035;
-  return {
-    ...base,
-    price: Math.max(1, Math.round(base.price * drift * 100) / 100),
-    changePercent: Math.round((base.changePercent + (Math.random() - 0.5) * 1.3) * 100) / 100,
-    source: "demo" as const,
-    lastUpdated: new Date().toISOString()
+    price: Number(data.price),
+    changePercent: Number(data.changePercent || 0),
+    lastUpdated: data.lastUpdated || new Date().toISOString()
   };
 }
 
@@ -165,7 +148,7 @@ function App() {
   const [avgPrice, setAvgPrice] = useState(100);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [autoRefresh, setAutoRefresh] = useState(localStorage.getItem(AUTO_REFRESH_STORAGE) !== "false");
-  const [quotePreview, setQuotePreview] = useState<ReturnType<typeof fallbackQuote> | null>(null);
+  const [quotePreview, setQuotePreview] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState("");
 
   useEffect(() => {
@@ -191,6 +174,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    refreshPrices();
+  }, []);
+
+  useEffect(() => {
     if (!autoRefresh) return;
 
     const timer = window.setInterval(() => {
@@ -205,100 +192,108 @@ function App() {
     setQuoteError("");
   }, [market, symbol]);
 
+  const liveHoldings = holdings.filter((item) => item.quoteState === "live");
   const totals = useMemo(() => {
-    return holdings.reduce(
+    return liveHoldings.reduce(
       (acc, item) => {
         const invested = item.quantity * item.avgPrice;
         const value = item.quantity * item.price;
-        acc.invested += item.market === "KR" ? invested / 1350 : invested;
-        acc.value += item.market === "KR" ? value / 1350 : value;
-        acc.krwValue += item.market === "KR" ? value : value * 1350;
+        acc.invested += item.market === "KR" ? invested / USD_KRW_RATE : invested;
+        acc.value += item.market === "KR" ? value / USD_KRW_RATE : value;
+        acc.krwValue += item.market === "KR" ? value : value * USD_KRW_RATE;
         return acc;
       },
       { invested: 0, value: 0, krwValue: 0 }
     );
-  }, [holdings]);
+  }, [liveHoldings]);
 
   const profit = totals.value - totals.invested;
   const profitPercent = totals.invested ? (profit / totals.invested) * 100 : 0;
-  const best = holdings.reduce<Holding | null>((top, item) => (!top || item.changePercent > top.changePercent ? item : top), null);
+  const best = liveHoldings.reduce<Holding | null>((top, item) => (!top || item.changePercent > top.changePercent ? item : top), null);
 
   async function refreshPrices() {
+    if (!holdings.length) return;
     setStatus("loading");
 
-    let usedApi = false;
-    let usedFallback = false;
+    let hasError = false;
     const updated = await Promise.all(
       holdings.map(async (item) => {
         try {
           const quote = await fetchQuote(item.symbol, item.market);
-          usedApi = true;
-          return { ...item, ...quote };
-        } catch {
-          usedFallback = true;
-          return { ...item, ...fallbackQuote(item.symbol) };
+          return {
+            ...item,
+            ...quote,
+            quoteState: "live" as const,
+            errorMessage: undefined
+          };
+        } catch (error) {
+          hasError = true;
+          return {
+            ...item,
+            quoteState: "error" as const,
+            errorMessage: error instanceof Error ? error.message : "실시간 시세를 조회할 수 없습니다."
+          };
         }
       })
     );
 
     setHoldings(updated);
-    setStatus(usedApi && !usedFallback ? "success" : "fallback");
+    setStatus(hasError ? "error" : "success");
   }
 
   async function previewQuote() {
     setStatus("loading");
     setQuoteError("");
+    setQuotePreview(null);
     const normalized = symbol.trim().toUpperCase();
+
+    if (!normalized) {
+      setQuoteError("종목 코드를 입력하세요.");
+      setStatus("error");
+      return;
+    }
 
     try {
       const quote = await fetchQuote(normalized, market);
       setQuotePreview(quote);
       setAvgPrice(quote.price);
       setStatus("success");
-    } catch {
-      const quote = fallbackQuote(normalized);
-      setQuotePreview(quote);
-      setAvgPrice(quote.price);
-      setQuoteError("API 조회에 실패해 데모 가격을 표시했습니다.");
-      setStatus("fallback");
+    } catch (error) {
+      setQuoteError(error instanceof Error ? error.message : "실시간 시세를 조회할 수 없습니다.");
+      setStatus("error");
     }
   }
 
   async function addHolding(event: React.FormEvent) {
     event.preventDefault();
-    setStatus("loading");
+    setQuoteError("");
     const normalized = symbol.trim().toUpperCase();
 
-    let quote = quotePreview || fallbackQuote(normalized);
     try {
-      if (!quotePreview) {
-        quote = await fetchQuote(normalized, market);
-        setStatus("success");
-      } else {
-        setStatus(quote.source === "api" ? "success" : "fallback");
-      }
-    } catch {
-      setStatus("fallback");
+      const quote = quotePreview || (await fetchQuote(normalized, market));
+      setHoldings((items) => [
+        {
+          id: uid(),
+          market,
+          symbol: normalized,
+          name: quote.name,
+          quantity: Math.max(0, Number(quantity)),
+          avgPrice: Math.max(0, Number(avgPrice)),
+          price: quote.price,
+          changePercent: quote.changePercent,
+          lastUpdated: quote.lastUpdated,
+          quoteState: "live"
+        },
+        ...items
+      ]);
+      setStatus("success");
+      setSymbol(market === "US" ? "MSFT" : "000660");
+      setQuotePreview(null);
+      setActiveTab("portfolio");
+    } catch (error) {
+      setStatus("error");
+      setQuoteError(error instanceof Error ? error.message : "실시간 시세 확인 후 추가할 수 있습니다.");
     }
-
-    setHoldings((items) => [
-      {
-        id: uid(),
-        market,
-        symbol: normalized,
-        name: quote.name,
-        quantity: Math.max(0, Number(quantity)),
-        avgPrice: Math.max(0, Number(avgPrice)),
-        price: quote.price,
-        changePercent: quote.changePercent,
-        source: quote.source,
-        lastUpdated: quote.lastUpdated
-      },
-      ...items
-    ]);
-    setSymbol(market === "US" ? "MSFT" : "000660");
-    setQuotePreview(null);
-    setActiveTab("portfolio");
   }
 
   async function installApp() {
@@ -312,9 +307,9 @@ function App() {
     <main className="app">
       <section className="hero">
         <div>
-          <p className="eyebrow">PWA Stock Portfolio</p>
+          <p className="eyebrow">Live Stock PWA</p>
           <h1>MyStock Lab</h1>
-          <p className="subtitle">관심 종목, 모의 수익률, 모바일 설치까지 한 번에 실습하는 개인 주식 앱</p>
+          <p className="subtitle">실시간 API 시세가 확인된 종목만 포트폴리오에 담아 관리하는 개인 주식 앱</p>
         </div>
         <button className="installButton" onClick={installApp} disabled={!installPrompt} title="홈 화면에 설치">
           <Download size={18} />
@@ -329,7 +324,7 @@ function App() {
             총 평가금액
           </div>
           <strong>{currency(totals.krwValue, "KR")}</strong>
-          <span>USD 환산 {currency(totals.value, "US")}</span>
+          <span>실시간 반영 종목 {liveHoldings.length}개</span>
         </article>
         <article className="summaryCard">
           <div className="cardLabel">
@@ -346,7 +341,7 @@ function App() {
           </div>
           <strong>{best ? best.symbol : "-"}</strong>
           <span className={best && best.changePercent >= 0 ? "gain" : "loss"}>
-            {best ? `${best.changePercent.toFixed(2)}%` : "0.00%"}
+            {best ? `${best.changePercent.toFixed(2)}%` : "시세 대기"}
           </span>
         </article>
       </section>
@@ -369,70 +364,18 @@ function App() {
       {activeTab === "portfolio" && (
         <section className="panel">
           <div className="panelHeader">
-          <div>
-            <h2>관심 종목</h2>
-            <p>{statusMessage(status)}</p>
-          </div>
-            <button className="iconButton" onClick={refreshPrices} title="가격 새로고침">
+            <div>
+              <h2>실시간 포트폴리오</h2>
+              <p>{statusMessage(status)}</p>
+            </div>
+            <button className="iconButton" onClick={refreshPrices} title="실시간 가격 새로고침">
               <RefreshCcw size={18} />
             </button>
           </div>
           <div className="holdings">
-            {holdings.map((item) => {
-              const value = item.quantity * item.price;
-              const invested = item.quantity * item.avgPrice;
-              const itemProfit = value - invested;
-              const itemProfitPercent = invested ? (itemProfit / invested) * 100 : 0;
-
-              return (
-                <article className="holdingCard" key={item.id}>
-                  <div className="stockTop">
-                    <div className="symbolBadge">{item.market}</div>
-                    <div>
-                      <h3>{item.symbol}</h3>
-                      <p>
-                        {item.name} · {item.source === "api" ? "실제 시세" : "데모 시세"}
-                      </p>
-                    </div>
-                    <button
-                      className="deleteButton"
-                      onClick={() => setHoldings((items) => items.filter((candidate) => candidate.id !== item.id))}
-                      title="종목 삭제"
-                    >
-                      <Trash2 size={17} />
-                    </button>
-                  </div>
-                  <div className="miniChart" aria-hidden="true">
-                    {Array.from({ length: 18 }).map((_, index) => (
-                      <span
-                        key={index}
-                        style={{
-                          height: `${26 + Math.abs(Math.sin(index + item.price / 13)) * 50}%`
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="stockNumbers">
-                    <div>
-                      <span>현재가</span>
-                      <strong>{currency(item.price, item.market)}</strong>
-                    </div>
-                    <div>
-                      <span>평가금액</span>
-                      <strong>{currency(value, item.market)}</strong>
-                    </div>
-                    <div>
-                      <span>손익률</span>
-                      <strong className={itemProfit >= 0 ? "gain" : "loss"}>{itemProfitPercent.toFixed(2)}%</strong>
-                    </div>
-                    <div>
-                      <span>업데이트</span>
-                      <strong>{formatUpdateTime(item.lastUpdated)}</strong>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
+            {holdings.map((item) => (
+              <HoldingCard key={item.id} item={item} onDelete={() => setHoldings((items) => items.filter((candidate) => candidate.id !== item.id))} />
+            ))}
           </div>
         </section>
       )}
@@ -441,8 +384,8 @@ function App() {
         <section className="panel">
           <div className="panelHeader">
             <div>
-              <h2>종목 추가</h2>
-              <p>종목을 먼저 조회한 뒤 실제 증권앱처럼 보유 수량과 평균 매수가를 입력합니다.</p>
+              <h2>실시간 종목 추가</h2>
+              <p>API 조회가 성공한 종목만 포트폴리오에 추가할 수 있습니다.</p>
             </div>
           </div>
           <form className="formGrid" onSubmit={addHolding}>
@@ -461,7 +404,7 @@ function App() {
               </label>
               <button className="lookupButton" type="button" onClick={previewQuote}>
                 <RefreshCcw size={17} />
-                현재가 조회
+                실시간 조회
               </button>
             </div>
             <div className="quickSymbols">
@@ -474,7 +417,7 @@ function App() {
             {quotePreview && (
               <article className="quotePreview">
                 <div>
-                  <span>{quotePreview.source === "api" ? "실제 시세" : "데모 시세"}</span>
+                  <span>실시간 시세 확인</span>
                   <strong>{quotePreview.name}</strong>
                 </div>
                 <div>
@@ -500,11 +443,11 @@ function App() {
               <span>예상 매수 원금</span>
               <strong>{currency(Number(quantity) * Number(avgPrice || 0), market)}</strong>
               <span>현재가 기준 평가금액</span>
-              <strong>{currency(Number(quantity) * (quotePreview?.price || avgPrice || 0), market)}</strong>
+              <strong>{currency(Number(quantity) * (quotePreview?.price || 0), market)}</strong>
             </article>
-            <button className="primaryButton" type="submit">
+            <button className="primaryButton" type="submit" disabled={!quotePreview}>
               <Plus size={18} />
-              내 포트폴리오에 추가
+              실시간 확인 종목 추가
             </button>
           </form>
         </section>
@@ -515,33 +458,33 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>API와 설치</h2>
-              <p>API 키는 앱 화면에 입력하지 않고 Vercel 환경변수에 숨겨서 호출합니다.</p>
+              <p>이 앱은 데모 가격 없이 Vercel 서버리스 API가 반환한 실제 시세만 사용합니다.</p>
             </div>
           </div>
           <div className="settingsList">
             <article className="note">
-              <RefreshCcw size={18} />
+              <CheckCircle2 size={18} />
               <div>
-                <strong>자동 API 호출</strong>
-                <p>앱은 <code>/api/quote</code>를 호출하고, Vercel 환경변수 <code>TWELVE_DATA_API_KEY</code>로 실제 시세를 조회합니다.</p>
+                <strong>실시간 전용 모드</strong>
+                <p>앱은 <code>/api/quote</code>를 호출하고, Vercel 환경변수 <code>TWELVE_DATA_API_KEY</code>로 Twelve Data 시세만 조회합니다.</p>
               </div>
             </article>
             <label className="toggleRow">
               <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
-              <span>1분마다 자동으로 가격 새로고침</span>
+              <span>1분마다 자동으로 실시간 가격 새로고침</span>
             </label>
             <article className="note">
               <BarChart3 size={18} />
               <div>
-                <strong>국내 주식</strong>
-                <p>Twelve Data에서는 삼성전자처럼 <code>005930:KRX</code> 형식으로 조회를 시도합니다. 플랜/지원 범위에 따라 데모 가격으로 전환될 수 있습니다.</p>
+                <strong>추가 가능한 종목</strong>
+                <p>종목 추가 전에 실시간 조회가 성공해야 합니다. 조회 실패 종목은 포트폴리오에 추가되지 않습니다.</p>
               </div>
             </article>
             <article className="note">
               <Smartphone size={18} />
               <div>
                 <strong>PWA 설치</strong>
-                <p>Vercel 배포 후 스마트폰 브라우저에서 접속해 홈 화면에 추가하면 앱 아이콘처럼 실행됩니다.</p>
+                <p>Vercel 배포 후 아이폰 Safari에서 접속해 홈 화면에 추가하면 앱 아이콘처럼 실행됩니다.</p>
               </div>
             </article>
           </div>
@@ -551,12 +494,76 @@ function App() {
   );
 }
 
+function HoldingCard({ item, onDelete }: { item: Holding; onDelete: () => void }) {
+  const isLive = item.quoteState === "live";
+  const value = isLive ? item.quantity * item.price : 0;
+  const invested = item.quantity * item.avgPrice;
+  const itemProfit = value - invested;
+  const itemProfitPercent = invested && isLive ? (itemProfit / invested) * 100 : 0;
+
+  return (
+    <article className={`holdingCard ${item.quoteState === "error" ? "hasError" : ""}`}>
+      <div className="stockTop">
+        <div className="symbolBadge">{item.market}</div>
+        <div>
+          <h3>{item.symbol}</h3>
+          <p>
+            {item.name} · {quoteStateLabel(item.quoteState)}
+          </p>
+        </div>
+        <button className="deleteButton" onClick={onDelete} title="종목 삭제">
+          <Trash2 size={17} />
+        </button>
+      </div>
+      <div className="miniChart" aria-hidden="true">
+        {Array.from({ length: 18 }).map((_, index) => (
+          <span
+            key={index}
+            style={{
+              height: `${26 + Math.abs(Math.sin(index + Math.max(item.price, 1) / 13)) * 50}%`
+            }}
+          />
+        ))}
+      </div>
+      <div className="stockNumbers">
+        <div>
+          <span>현재가</span>
+          <strong>{isLive ? currency(item.price, item.market) : "-"}</strong>
+        </div>
+        <div>
+          <span>평가금액</span>
+          <strong>{isLive ? currency(value, item.market) : "-"}</strong>
+        </div>
+        <div>
+          <span>손익률</span>
+          <strong className={itemProfit >= 0 ? "gain" : "loss"}>{isLive ? `${itemProfitPercent.toFixed(2)}%` : "-"}</strong>
+        </div>
+        <div>
+          <span>업데이트</span>
+          <strong>{formatUpdateTime(item.lastUpdated)}</strong>
+        </div>
+      </div>
+      {item.quoteState === "error" && (
+        <p className="quoteError">
+          <AlertCircle size={15} />
+          {item.errorMessage}
+        </p>
+      )}
+    </article>
+  );
+}
+
+function quoteStateLabel(state: QuoteState) {
+  if (state === "live") return "실시간 시세";
+  if (state === "error") return "조회 실패";
+  return "시세 조회 중";
+}
+
 function statusMessage(status: ApiStatus) {
-  if (status === "loading") return "가격을 불러오는 중입니다.";
-  if (status === "success") return "API 가격을 반영했습니다.";
-  if (status === "fallback") return "API 조회가 어려운 종목은 데모 가격으로 업데이트했습니다.";
-  if (status === "error") return "조회에 실패했습니다.";
-  return "새로고침 버튼으로 가격을 업데이트하세요.";
+  if (status === "loading") return "실시간 가격을 불러오는 중입니다.";
+  if (status === "success") return "모든 가능한 종목의 실시간 가격을 반영했습니다.";
+  if (status === "error") return "일부 종목의 실시간 조회에 실패했습니다.";
+  return "새로고침 버튼으로 실시간 가격을 업데이트하세요.";
 }
 
 function formatUpdateTime(value?: string) {

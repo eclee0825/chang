@@ -482,6 +482,11 @@ select:focus {
   font-weight: 900;
 }
 
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .settingsList {
   display: grid;
   gap: 12px;
@@ -535,6 +540,22 @@ code {
 .note p {
   color: #687775;
   line-height: 1.45;
+}
+
+.holdingCard.hasError {
+  border-color: #f0c7c7;
+  background: #fffafa;
+}
+
+.quoteError {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  color: #bf3939;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 @media (max-width: 780px) {
