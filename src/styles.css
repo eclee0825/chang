@@ -1,0 +1,447 @@
+:root {
+  color: #14212a;
+  background: #f3f6f4;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(16, 24, 32, 0.96) 0, rgba(16, 24, 32, 0.96) 280px, transparent 280px),
+    #f3f6f4;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 22px 18px 42px;
+}
+
+.hero {
+  min-height: 154px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  color: #ffffff;
+}
+
+.eyebrow {
+  margin: 2px 0 8px;
+  color: #8fd8c2;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.15rem, 9vw, 4.1rem);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.subtitle {
+  max-width: 600px;
+  margin-top: 12px;
+  color: #ccdad6;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+.installButton,
+.iconButton,
+.deleteButton,
+.primaryButton,
+.tabs button {
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.installButton {
+  min-width: 84px;
+  height: 42px;
+  border-radius: 8px;
+  background: #8fd8c2;
+  color: #101820;
+  font-weight: 800;
+}
+
+.installButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.summaryCard {
+  min-height: 136px;
+  padding: 18px;
+  border: 1px solid #dbe5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(28, 43, 50, 0.08);
+}
+
+.summaryCard.primary {
+  background: #fff8e8;
+  border-color: #ead7a7;
+}
+
+.cardLabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #62716d;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.summaryCard strong {
+  display: block;
+  margin-top: 18px;
+  font-size: clamp(1.45rem, 4vw, 2.25rem);
+  line-height: 1;
+}
+
+.summaryCard span {
+  display: block;
+  margin-top: 8px;
+  color: #667571;
+}
+
+.gain {
+  color: #0b8f61 !important;
+}
+
+.loss {
+  color: #d44545 !important;
+}
+
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 16px 0;
+  padding: 8px;
+  border: 1px solid #dbe5e1;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+}
+
+.tabs button {
+  min-height: 44px;
+  border-radius: 7px;
+  background: transparent;
+  color: #53605d;
+  font-weight: 800;
+}
+
+.tabs button.active {
+  background: #101820;
+  color: #ffffff;
+}
+
+.panel {
+  border: 1px solid #dbe5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(28, 43, 50, 0.07);
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px;
+  border-bottom: 1px solid #edf2f0;
+}
+
+.panelHeader h2 {
+  font-size: 1.05rem;
+}
+
+.panelHeader p {
+  margin-top: 5px;
+  color: #687775;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.iconButton,
+.deleteButton {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+
+.iconButton {
+  background: #eef6f2;
+  color: #157054;
+}
+
+.deleteButton {
+  margin-left: auto;
+  background: #fff0f0;
+  color: #bf3939;
+}
+
+.holdings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.holdingCard {
+  min-height: 254px;
+  padding: 16px;
+  border: 1px solid #e1e9e6;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.stockTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.symbolBadge {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: #101820;
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.stockTop h3 {
+  font-size: 1.1rem;
+}
+
+.stockTop p {
+  margin-top: 3px;
+  color: #687775;
+  font-size: 0.88rem;
+}
+
+.miniChart {
+  height: 74px;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin: 18px 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #edf8f4, #f8fbfa);
+}
+
+.miniChart span {
+  flex: 1;
+  min-width: 4px;
+  border-radius: 999px 999px 0 0;
+  background: #24a77b;
+}
+
+.stockNumbers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.stockNumbers div {
+  min-height: 68px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e8eeec;
+}
+
+.stockNumbers span {
+  display: block;
+  color: #687775;
+  font-size: 0.78rem;
+}
+
+.stockNumbers strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.95rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 18px;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  color: #34423f;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #cfdad6;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #101820;
+  padding: 0 13px;
+  outline: none;
+}
+
+select {
+  appearance: none;
+}
+
+input:focus,
+select:focus {
+  border-color: #1e9a74;
+  box-shadow: 0 0 0 3px rgba(30, 154, 116, 0.13);
+}
+
+.selectWrap {
+  position: relative;
+  display: block;
+}
+
+.selectWrap svg {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.primaryButton {
+  grid-column: 1 / -1;
+  min-height: 52px;
+  border-radius: 8px;
+  background: #101820;
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.settingsList {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.note {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e2ebe7;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.note svg {
+  flex: 0 0 auto;
+  color: #157054;
+}
+
+.note strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.note p {
+  color: #687775;
+  line-height: 1.45;
+}
+
+@media (max-width: 780px) {
+  body {
+    background:
+      linear-gradient(180deg, rgba(16, 24, 32, 0.96) 0, rgba(16, 24, 32, 0.96) 330px, transparent 330px),
+      #f3f6f4;
+  }
+
+  .app {
+    padding: 18px 12px 32px;
+  }
+
+  .hero {
+    min-height: 198px;
+    flex-direction: column;
+  }
+
+  .summaryGrid,
+  .holdings,
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .summaryCard {
+    min-height: 112px;
+  }
+
+  .tabs {
+    gap: 5px;
+  }
+
+  .tabs button {
+    min-height: 48px;
+    font-size: 0.82rem;
+    gap: 5px;
+  }
+
+  .stockNumbers {
+    grid-template-columns: 1fr;
+  }
+}
