@@ -19,10 +19,12 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
+type Market = "US" | "KR";
 type QuoteState = "pending" | "live" | "error";
 type ApiStatus = "idle" | "loading" | "success" | "error";
 
 type SearchResult = {
+  market: Market;
   symbol: string;
   name: string;
   type: string;
@@ -30,6 +32,7 @@ type SearchResult = {
 };
 
 type Quote = {
+  market: Market;
   symbol: string;
   name: string;
   price: number;
@@ -44,6 +47,7 @@ type Quote = {
 
 type Holding = {
   id: string;
+  market: Market;
   symbol: string;
   name: string;
   quantity: number;
@@ -55,26 +59,36 @@ type Holding = {
   previousClose: number;
   changePercent: number;
   lastUpdated?: string;
+  provider?: string;
   quoteState: QuoteState;
   errorMessage?: string;
 };
 
-const STORAGE_KEY = "mystock-lab-finnhub-live-us-v1";
+const STORAGE_KEY = "mystock-lab-live-global-v1";
 const AUTO_REFRESH_STORAGE = "mystock-lab-auto-refresh";
 const QUOTE_REFRESH_MS = 60_000;
 const USD_KRW_RATE = 1350;
 
 const seedHoldings: Holding[] = [
-  createSeedHolding("AAPL", "Apple Inc", 3, 183),
-  createSeedHolding("NVDA", "NVIDIA Corp", 2, 112),
-  createSeedHolding("MSFT", "Microsoft Corp", 1, 420)
+  createSeedHolding("US", "AAPL", "Apple Inc", 3, 183),
+  createSeedHolding("US", "NVDA", "NVIDIA Corp", 2, 112),
+  createSeedHolding("KR", "005930", "삼성전자", 5, 72000)
 ];
 
-const popularSymbols = ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL", "AMZN", "META"];
+const popularQueries: Record<Market, string[]> = {
+  US: ["Apple", "Microsoft", "NVIDIA", "Tesla", "Google", "Amazon", "Meta"],
+  KR: ["삼성전자", "SK하이닉스", "NAVER", "카카오", "현대차", "기아", "셀트리온"]
+};
 
-function createSeedHolding(symbol: string, name: string, quantity: number, avgPrice: number): Holding {
+const marketLabel: Record<Market, string> = {
+  US: "미국 주식",
+  KR: "국내 주식"
+};
+
+function createSeedHolding(market: Market, symbol: string, name: string, quantity: number, avgPrice: number): Holding {
   return {
-    id: `seed-${symbol}`,
+    id: `seed-${market}-${symbol}`,
+    market,
     symbol,
     name,
     quantity,
@@ -109,6 +123,18 @@ function krw(value: number) {
   }).format(value);
 }
 
+function money(value: number, market: Market) {
+  return market === "KR" ? krw(value) : usd(value);
+}
+
+function toUsd(value: number, market: Market) {
+  return market === "KR" ? value / USD_KRW_RATE : value;
+}
+
+function toKrw(value: number, market: Market) {
+  return market === "KR" ? value : value * USD_KRW_RATE;
+}
+
 function loadHoldings() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return seedHoldings;
@@ -121,6 +147,7 @@ function loadHoldings() {
       .filter((item) => item.symbol)
       .map((item) => ({
         id: item.id || uid(),
+        market: (item.market as Market) || "US",
         symbol: String(item.symbol).toUpperCase(),
         name: item.name || String(item.symbol).toUpperCase(),
         quantity: Number(item.quantity || 0),
@@ -132,6 +159,7 @@ function loadHoldings() {
         previousClose: item.quoteState === "live" ? Number(item.previousClose || 0) : 0,
         changePercent: item.quoteState === "live" ? Number(item.changePercent || 0) : 0,
         lastUpdated: item.quoteState === "live" ? item.lastUpdated : undefined,
+        provider: item.provider,
         quoteState: item.quoteState === "live" ? "live" : "pending",
         errorMessage: undefined
       }));
@@ -140,23 +168,25 @@ function loadHoldings() {
   }
 }
 
-async function searchSymbols(query: string): Promise<SearchResult[]> {
+async function searchSymbols(query: string, market: Market): Promise<SearchResult[]> {
   const url = new URL("/api/search", window.location.origin);
   url.searchParams.set("q", query);
+  url.searchParams.set("market", market);
 
   const response = await fetch(url);
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || !Array.isArray(data.results)) {
-    throw new Error(data.error || "회사명 검색에 실패했습니다.");
+    throw new Error(data.error || "종목 검색에 실패했습니다.");
   }
 
   return data.results;
 }
 
-async function fetchQuote(symbol: string, name?: string): Promise<Quote> {
+async function fetchQuote(symbol: string, market: Market, name?: string): Promise<Quote> {
   const url = new URL("/api/quote", window.location.origin);
   url.searchParams.set("symbol", symbol);
+  url.searchParams.set("market", market);
   if (name) url.searchParams.set("name", name);
 
   const response = await fetch(url);
@@ -173,6 +203,7 @@ function App() {
   const [holdings, setHoldings] = useState<Holding[]>(loadHoldings);
   const [status, setStatus] = useState<ApiStatus>("idle");
   const [activeTab, setActiveTab] = useState<"portfolio" | "add" | "settings">("portfolio");
+  const [market, setMarket] = useState<Market>("US");
   const [query, setQuery] = useState("Apple");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedStock, setSelectedStock] = useState<SearchResult | null>(null);
@@ -219,15 +250,23 @@ function App() {
     return () => window.clearInterval(timer);
   }, [autoRefresh, holdings]);
 
+  useEffect(() => {
+    setQuery(market === "KR" ? "삼성전자" : "Apple");
+    setSearchResults([]);
+    setSelectedStock(null);
+    setQuotePreview(null);
+    setSearchError("");
+  }, [market]);
+
   const liveHoldings = holdings.filter((item) => item.quoteState === "live");
   const totals = useMemo(() => {
     return liveHoldings.reduce(
       (acc, item) => {
         const invested = item.quantity * item.avgPrice;
         const value = item.quantity * item.price;
-        acc.invested += invested;
-        acc.value += value;
-        acc.krwValue += value * USD_KRW_RATE;
+        acc.invested += toUsd(invested, item.market);
+        acc.value += toUsd(value, item.market);
+        acc.krwValue += toKrw(value, item.market);
         return acc;
       },
       { invested: 0, value: 0, krwValue: 0 }
@@ -246,7 +285,7 @@ function App() {
     const updated = await Promise.all(
       holdings.map(async (item) => {
         try {
-          const quote = await fetchQuote(item.symbol, item.name);
+          const quote = await fetchQuote(item.symbol, item.market, item.name);
           return {
             ...item,
             ...quote,
@@ -276,20 +315,20 @@ function App() {
     setSelectedStock(null);
     setQuotePreview(null);
 
-    if (trimmed.length < 2) {
-      setSearchError("회사명이나 티커를 2글자 이상 입력하세요.");
+    if (trimmed.length < 1) {
+      setSearchError("회사명이나 종목코드를 입력하세요.");
       return;
     }
 
     try {
-      const results = await searchSymbols(trimmed);
+      const results = await searchSymbols(trimmed, market);
       if (!results.length) {
         setSearchError("검색 결과가 없습니다.");
         return;
       }
       setSearchResults(results);
     } catch (error) {
-      setSearchError(error instanceof Error ? error.message : "회사명 검색에 실패했습니다.");
+      setSearchError(error instanceof Error ? error.message : "종목 검색에 실패했습니다.");
     }
   }
 
@@ -300,7 +339,7 @@ function App() {
     setStatus("loading");
 
     try {
-      const quote = await fetchQuote(result.symbol, result.name);
+      const quote = await fetchQuote(result.symbol, result.market, result.name);
       setQuotePreview(quote);
       setAvgPrice(quote.price);
       setStatus("success");
@@ -320,6 +359,7 @@ function App() {
     setHoldings((items) => [
       {
         id: uid(),
+        market: quotePreview.market,
         symbol: quotePreview.symbol,
         name: quotePreview.name || selectedStock.name,
         quantity: Math.max(0, Number(quantity)),
@@ -331,12 +371,13 @@ function App() {
         previousClose: quotePreview.previousClose,
         changePercent: quotePreview.changePercent,
         lastUpdated: quotePreview.lastUpdated,
+        provider: quotePreview.provider,
         quoteState: "live"
       },
       ...items
     ]);
     setStatus("success");
-    setQuery("Microsoft");
+    setQuery(market === "KR" ? "삼성전자" : "Microsoft");
     setSearchResults([]);
     setSelectedStock(null);
     setQuotePreview(null);
@@ -354,9 +395,9 @@ function App() {
     <main className="app">
       <section className="hero">
         <div>
-          <p className="eyebrow">Finnhub Live US Stocks</p>
+          <p className="eyebrow">Live US/KR Stock PWA</p>
           <h1>MyStock Lab</h1>
-          <p className="subtitle">회사명으로 미국 주식을 검색하고, 실시간 quote가 확인된 종목만 포트폴리오에 추가합니다.</p>
+          <p className="subtitle">미국 주식은 Finnhub, 국내 주식은 Twelve Data KRX API로 조회해 실시간 확인 종목만 추가합니다.</p>
         </div>
         <button className="installButton" onClick={installApp} disabled={!installPrompt} title="홈 화면에 설치">
           <Download size={18} />
@@ -387,9 +428,7 @@ function App() {
             오늘의 강세
           </div>
           <strong>{best ? best.symbol : "-"}</strong>
-          <span className={best && best.changePercent >= 0 ? "gain" : "loss"}>
-            {best ? `${best.changePercent.toFixed(2)}%` : "시세 대기"}
-          </span>
+          <span className={best && best.changePercent >= 0 ? "gain" : "loss"}>{best ? `${best.changePercent.toFixed(2)}%` : "시세 대기"}</span>
         </article>
       </section>
 
@@ -432,14 +471,22 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>회사명으로 종목 추가</h2>
-              <p>Finnhub 검색 결과에서 실시간 quote가 성공한 미국 주식만 추가할 수 있습니다.</p>
+              <p>시장 선택 후 검색 결과에서 실시간 API 조회가 성공한 종목만 추가할 수 있습니다.</p>
             </div>
           </div>
           <form className="formGrid" onSubmit={addHolding}>
+            <div className="marketSwitch" role="group" aria-label="시장 선택">
+              <button type="button" className={market === "US" ? "selected" : ""} onClick={() => setMarket("US")}>
+                미국 주식
+              </button>
+              <button type="button" className={market === "KR" ? "selected" : ""} onClick={() => setMarket("KR")}>
+                국내 주식
+              </button>
+            </div>
             <div className="quoteSearch">
               <label>
-                회사명 또는 티커
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Apple, Tesla, Microsoft, AAPL" />
+                회사명 또는 종목코드
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Apple, 삼성전자, AAPL, 005930" />
               </label>
               <button className="lookupButton" type="button" onClick={() => runSearch()}>
                 <Search size={17} />
@@ -447,7 +494,7 @@ function App() {
               </button>
             </div>
             <div className="quickSymbols">
-              {popularSymbols.map((item) => (
+              {popularQueries[market].map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -464,13 +511,15 @@ function App() {
               <div className="searchResults">
                 {searchResults.map((result) => (
                   <button
-                    key={`${result.symbol}-${result.name}`}
-                    className={selectedStock?.symbol === result.symbol ? "selected" : ""}
+                    key={`${result.market}-${result.symbol}-${result.name}`}
+                    className={selectedStock?.symbol === result.symbol && selectedStock?.market === result.market ? "selected" : ""}
                     type="button"
                     onClick={() => selectStock(result)}
                   >
                     <strong>{result.symbol}</strong>
-                    <span>{result.name}</span>
+                    <span>
+                      {result.name} · {marketLabel[result.market]}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -478,12 +527,12 @@ function App() {
             {quotePreview && (
               <article className="quotePreview">
                 <div>
-                  <span>실시간 시세 확인</span>
+                  <span>{quotePreview.provider} 시세 확인</span>
                   <strong>{quotePreview.name}</strong>
                 </div>
                 <div>
                   <span>현재가</span>
-                  <strong>{usd(quotePreview.price)}</strong>
+                  <strong>{money(quotePreview.price, quotePreview.market)}</strong>
                 </div>
                 <div>
                   <span>변동률</span>
@@ -502,9 +551,9 @@ function App() {
             </label>
             <article className="tradeTicket">
               <span>예상 매수 원금</span>
-              <strong>{usd(Number(quantity) * Number(avgPrice || 0))}</strong>
+              <strong>{money(Number(quantity) * Number(avgPrice || 0), market)}</strong>
               <span>현재가 기준 평가금액</span>
-              <strong>{usd(Number(quantity) * (quotePreview?.price || 0))}</strong>
+              <strong>{quotePreview ? money(Number(quantity) * quotePreview.price, quotePreview.market) : money(0, market)}</strong>
             </article>
             <button className="primaryButton" type="submit" disabled={!quotePreview}>
               <Plus size={18} />
@@ -519,7 +568,7 @@ function App() {
           <div className="panelHeader">
             <div>
               <h2>API와 설치</h2>
-              <p>이 앱은 데모 가격 없이 Finnhub 실시간 미국 주식 quote만 사용합니다.</p>
+              <p>미국/국내 주식 모두 데모 가격 없이 서버리스 API가 반환한 시세만 사용합니다.</p>
             </div>
           </div>
           <div className="settingsList">
@@ -527,7 +576,7 @@ function App() {
               <CheckCircle2 size={18} />
               <div>
                 <strong>필요한 Vercel 환경변수</strong>
-                <p>Vercel 프로젝트에 <code>FINNHUB_API_KEY</code>를 추가해야 <code>/api/search</code>와 <code>/api/quote</code>가 동작합니다.</p>
+                <p><code>FINNHUB_API_KEY</code>는 미국 주식, <code>TWELVE_DATA_API_KEY</code>는 국내 KRX 조회에 사용합니다.</p>
               </div>
             </article>
             <label className="toggleRow">
@@ -538,7 +587,7 @@ function App() {
               <BarChart3 size={18} />
               <div>
                 <strong>추가 가능한 종목</strong>
-                <p>회사명 검색 후 실시간 quote가 성공한 미국 주식만 포트폴리오에 들어갑니다. 조회 실패 종목은 추가되지 않습니다.</p>
+                <p>검색 후 quote 조회가 성공한 종목만 포트폴리오에 들어갑니다. 조회 실패 종목은 추가되지 않습니다.</p>
               </div>
             </article>
             <article className="note">
@@ -565,7 +614,7 @@ function HoldingCard({ item, onDelete }: { item: Holding; onDelete: () => void }
   return (
     <article className={`holdingCard ${item.quoteState === "error" ? "hasError" : ""}`}>
       <div className="stockTop">
-        <div className="symbolBadge">US</div>
+        <div className="symbolBadge">{item.market}</div>
         <div>
           <h3>{item.symbol}</h3>
           <p>
@@ -589,11 +638,11 @@ function HoldingCard({ item, onDelete }: { item: Holding; onDelete: () => void }
       <div className="stockNumbers">
         <div>
           <span>현재가</span>
-          <strong>{isLive ? usd(item.price) : "-"}</strong>
+          <strong>{isLive ? money(item.price, item.market) : "-"}</strong>
         </div>
         <div>
           <span>평가금액</span>
-          <strong>{isLive ? usd(value) : "-"}</strong>
+          <strong>{isLive ? money(value, item.market) : "-"}</strong>
         </div>
         <div>
           <span>손익률</span>
